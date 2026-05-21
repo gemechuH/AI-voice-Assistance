@@ -19,8 +19,21 @@ def load_alarms():
             return json.load(f)
     return []
 
-async def speak(message):
-    communicate = edge_tts.Communicate(message, "en-US-JennyNeural")
+VOICES = {
+    "Jenny (Female)":      "en-US-JennyNeural",
+    "Aria (Female)":       "en-US-AriaNeural",
+    "Ava (Female)":        "en-US-AvaNeural",
+    "Emma (Female)":       "en-US-EmmaNeural",
+    "Michelle (Female)":   "en-US-MichelleNeural",
+    "Andrew (Male)":       "en-US-AndrewNeural",
+    "Brian (Male)":        "en-US-BrianNeural",
+    "Christopher (Male)":  "en-US-ChristopherNeural",
+    "Guy (Male)":          "en-US-GuyNeural",
+    "Roger (Male)":        "en-US-RogerNeural",
+}
+
+async def speak(message, voice):
+    communicate = edge_tts.Communicate(message, voice)
     await communicate.save("alarm.mp3")
 
 def play_audio():
@@ -48,13 +61,14 @@ class AlarmApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Voice Alarm System")
-        self.geometry("420x620")
+        self.geometry("460x620")
         self.resizable(False, False)
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
         self.alarms = load_alarms()
         self.running = False
+        self.stop_requested = False
 
         self.build_ui()
         self.refresh_list()
@@ -86,6 +100,11 @@ class AlarmApp(ctk.CTk):
         ctk.CTkOptionMenu(time_frame, values=minutes, variable=self.min_var, width=80).pack(side="left", padx=5)
         ctk.CTkOptionMenu(time_frame, values=["AM", "PM"], variable=self.ampm_var, width=80).pack(side="left", padx=5)
 
+        ctk.CTkLabel(self, text="Voice").pack()
+        self.voice_var = ctk.StringVar(value="Jenny (Female)")
+        ctk.CTkOptionMenu(self, values=list(VOICES.keys()),
+                          variable=self.voice_var, width=320).pack(pady=5)
+
         ctk.CTkLabel(self, text="Message").pack()
         self.msg_entry = ctk.CTkEntry(self, width=320, placeholder_text="Enter alarm message...")
         self.msg_entry.pack(pady=5)
@@ -107,7 +126,12 @@ class AlarmApp(ctk.CTk):
         self.start_btn = ctk.CTkButton(self, text="Start Alarms", width=320,
                                        fg_color="#27ae60", hover_color="#1e8449",
                                        command=self.start_alarms)
-        self.start_btn.pack(pady=10)
+        self.start_btn.pack(pady=(10, 5))
+
+        self.stop_btn = ctk.CTkButton(self, text="Stop Alarms", width=320,
+                                      fg_color="#7f8c8d", hover_color="#616a6b",
+                                      command=self.stop_alarms, state="disabled")
+        self.stop_btn.pack(pady=(0, 10))
 
     def update_clock(self):
         current = time.strftime("%I:%M:%S %p")
@@ -166,29 +190,83 @@ class AlarmApp(ctk.CTk):
             self.set_status("Alarms already running.", "orange")
             return
         self.running = True
+        self.stop_requested = False
         self.start_btn.configure(text="Running...", state="disabled")
+        self.stop_btn.configure(state="normal", fg_color="#e74c3c", hover_color="#c0392b")
         self.set_status("Alarms are running...", "green")
         thread = threading.Thread(target=self.alarm_loop, daemon=True)
         thread.start()
 
+    def stop_alarms(self):
+        self.stop_requested = True
+        self.set_status("Stopping alarms...", "orange")
+
+    def show_snooze_popup(self, alarm_time, message):
+        popup = ctk.CTkToplevel(self)
+        popup.title("Alarm!")
+        popup.geometry("320x220")
+        popup.resizable(False, False)
+        popup.grab_set()
+        popup.lift()
+
+        ctk.CTkLabel(popup, text="ALARM!", font=ctk.CTkFont(size=24, weight="bold"),
+                     text_color="#e74c3c").pack(pady=(20, 5))
+        ctk.CTkLabel(popup, text=alarm_time, font=ctk.CTkFont(size=18)).pack()
+        ctk.CTkLabel(popup, text=message, font=ctk.CTkFont(size=13),
+                     wraplength=280).pack(pady=10)
+
+        self.snooze_choice = None
+
+        def on_snooze():
+            self.snooze_choice = "snooze"
+            popup.destroy()
+
+        def on_dismiss():
+            self.snooze_choice = "dismiss"
+            popup.destroy()
+
+        btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        btn_frame.pack(pady=10)
+        ctk.CTkButton(btn_frame, text="Snooze 5 min", width=130,
+                      fg_color="#e67e22", hover_color="#ca6f1e",
+                      command=on_snooze).pack(side="left", padx=10)
+        ctk.CTkButton(btn_frame, text="Dismiss", width=130,
+                      fg_color="#c0392b", hover_color="#96281b",
+                      command=on_dismiss).pack(side="left", padx=10)
+
+        popup.wait_window()
+        return self.snooze_choice
+
     def alarm_loop(self):
         remaining = self.alarms.copy()
-        while remaining:
+        while remaining and not self.stop_requested:
             current_time = time.strftime("%H:%M")
             triggered = []
             for alarm_time, message in remaining:
                 if current_time == alarm_time:
                     self.set_status(f"Alarm triggered: {alarm_time}", "yellow")
-                    asyncio.run(speak(message))
+                    voice = VOICES[self.voice_var.get()]
+                    asyncio.run(speak(message, voice))
                     play_audio()
+                    choice = self.show_snooze_popup(alarm_time, message)
+                    if choice == "snooze":
+                        snoozed = time.strptime(alarm_time, "%H:%M")
+                        snoozed_minutes = snoozed.tm_hour * 60 + snoozed.tm_min + 5
+                        new_hour = (snoozed_minutes // 60) % 24
+                        new_min = snoozed_minutes % 60
+                        new_time = f"{new_hour:02}:{new_min:02}"
+                        remaining.append((new_time, message))
+                        self.set_status(f"Snoozed until {new_time}", "orange")
                     triggered.append((alarm_time, message))
             for alarm in triggered:
                 remaining.remove(alarm)
             time.sleep(10)
 
         self.running = False
+        self.stop_requested = False
         self.start_btn.configure(text="Start Alarms", state="normal")
-        self.set_status("All alarms done!", "green")
+        self.stop_btn.configure(state="disabled", fg_color="#7f8c8d", hover_color="#616a6b")
+        self.set_status("All alarms done!" if not self.stop_requested else "Alarms stopped.", "green")
 
 
 app = AlarmApp()
