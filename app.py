@@ -36,9 +36,10 @@ async def speak(message, voice):
     communicate = edge_tts.Communicate(message, voice)
     await communicate.save("alarm.mp3")
 
-def play_audio():
+def play_audio(volume=0.8):
     pygame.mixer.init()
     pygame.mixer.music.load("alarm.mp3")
+    pygame.mixer.music.set_volume(volume)
     pygame.mixer.music.play()
     while pygame.mixer.music.get_busy():
         time.sleep(0.1)
@@ -74,64 +75,113 @@ class AlarmApp(ctk.CTk):
         self.refresh_list()
 
     def build_ui(self):
-        ctk.CTkLabel(self, text="VOICE ALARM SYSTEM",
-                     font=ctk.CTkFont(size=22, weight="bold")).pack(pady=(20, 5))
-
-        self.clock_label = ctk.CTkLabel(self, text="",
-                                        font=ctk.CTkFont(size=36, weight="bold"),
+        # Title + clock side by side at top
+        top_frame = ctk.CTkFrame(self, fg_color="transparent")
+        top_frame.pack(fill="x", padx=15, pady=(12, 4))
+        ctk.CTkLabel(top_frame, text="VOICE ALARM",
+                     font=ctk.CTkFont(size=18, weight="bold")).pack(side="left")
+        self.clock_label = ctk.CTkLabel(top_frame, text="",
+                                        font=ctk.CTkFont(size=18, weight="bold"),
                                         text_color="#3498db")
-        self.clock_label.pack(pady=(0, 15))
+        self.clock_label.pack(side="right")
         self.update_clock()
 
-        ctk.CTkLabel(self, text="Set Alarm Time").pack()
+        ctk.CTkFrame(self, height=1, fg_color="#444").pack(fill="x", padx=15, pady=4)
 
-        time_frame = ctk.CTkFrame(self, fg_color="transparent")
-        time_frame.pack(pady=5)
+        # Row: Time + Voice
+        row1 = ctk.CTkFrame(self, fg_color="transparent")
+        row1.pack(fill="x", padx=15, pady=4)
+
+        time_col = ctk.CTkFrame(row1, fg_color="transparent")
+        time_col.pack(side="left")
+        ctk.CTkLabel(time_col, text="Time", font=ctk.CTkFont(size=12)).pack(anchor="w")
+        time_inner = ctk.CTkFrame(time_col, fg_color="transparent")
+        time_inner.pack()
 
         hours = [f"{h:02d}" for h in range(1, 13)]
         minutes = [f"{m:02d}" for m in range(0, 60)]
-
         self.hour_var = ctk.StringVar(value="07")
         self.min_var = ctk.StringVar(value="00")
         self.ampm_var = ctk.StringVar(value="AM")
 
-        ctk.CTkOptionMenu(time_frame, values=hours, variable=self.hour_var, width=80).pack(side="left", padx=5)
-        ctk.CTkLabel(time_frame, text=":", font=ctk.CTkFont(size=20, weight="bold")).pack(side="left")
-        ctk.CTkOptionMenu(time_frame, values=minutes, variable=self.min_var, width=80).pack(side="left", padx=5)
-        ctk.CTkOptionMenu(time_frame, values=["AM", "PM"], variable=self.ampm_var, width=80).pack(side="left", padx=5)
+        ctk.CTkOptionMenu(time_inner, values=hours, variable=self.hour_var, width=60).pack(side="left", padx=2)
+        ctk.CTkLabel(time_inner, text=":", font=ctk.CTkFont(size=16, weight="bold")).pack(side="left")
+        ctk.CTkOptionMenu(time_inner, values=minutes, variable=self.min_var, width=60).pack(side="left", padx=2)
+        ctk.CTkOptionMenu(time_inner, values=["AM", "PM"], variable=self.ampm_var, width=65).pack(side="left", padx=2)
 
-        ctk.CTkLabel(self, text="Voice").pack()
+        voice_col = ctk.CTkFrame(row1, fg_color="transparent")
+        voice_col.pack(side="right")
+        ctk.CTkLabel(voice_col, text="Voice", font=ctk.CTkFont(size=12)).pack(anchor="w")
         self.voice_var = ctk.StringVar(value="Jenny (Female)")
-        ctk.CTkOptionMenu(self, values=list(VOICES.keys()),
-                          variable=self.voice_var, width=320).pack(pady=5)
+        ctk.CTkOptionMenu(voice_col, values=list(VOICES.keys()),
+                          variable=self.voice_var, width=170).pack()
+        ctk.CTkButton(voice_col, text="Preview Voice", width=170, height=28,
+                      fg_color="#8e44ad", hover_color="#6c3483",
+                      command=self.preview_voice).pack(pady=(4, 0))
 
-        ctk.CTkLabel(self, text="Message").pack()
-        self.msg_entry = ctk.CTkEntry(self, width=320, placeholder_text="Enter alarm message...")
-        self.msg_entry.pack(pady=5)
+        # Row: Message + Add
+        row2 = ctk.CTkFrame(self, fg_color="transparent")
+        row2.pack(fill="x", padx=15, pady=4)
+        ctk.CTkLabel(row2, text="Message", font=ctk.CTkFont(size=12)).pack(anchor="w")
+        msg_row = ctk.CTkFrame(row2, fg_color="transparent")
+        msg_row.pack(fill="x")
+        self.msg_entry = ctk.CTkEntry(msg_row, placeholder_text="Enter alarm message...")
+        self.msg_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ctk.CTkButton(msg_row, text="Add", width=70,
+                      command=self.add_alarm).pack(side="right")
 
-        ctk.CTkButton(self, text="Add Alarm", width=320,
-                      command=self.add_alarm).pack(pady=10)
+        # Alarm list
+        ctk.CTkLabel(self, text="Your Alarms:", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=15)
+        self.listbox = ctk.CTkTextbox(self, height=120, state="disabled")
+        self.listbox.pack(fill="x", padx=15, pady=4)
 
-        ctk.CTkLabel(self, text="Your Alarms:").pack()
-        self.listbox = ctk.CTkTextbox(self, width=320, height=160, state="disabled")
-        self.listbox.pack(pady=5)
+        # Volume slider
+        vol_row = ctk.CTkFrame(self, fg_color="transparent")
+        vol_row.pack(fill="x", padx=15, pady=(0, 4))
+        ctk.CTkLabel(vol_row, text="Volume:", font=ctk.CTkFont(size=12)).pack(side="left")
+        self.volume_var = ctk.DoubleVar(value=0.8)
+        ctk.CTkSlider(vol_row, from_=0, to=1, variable=self.volume_var,
+                      width=200).pack(side="left", padx=8)
+        self.vol_label = ctk.CTkLabel(vol_row, text="80%", font=ctk.CTkFont(size=12))
+        self.vol_label.pack(side="left")
+        self.volume_var.trace_add("write", self.update_vol_label)
 
-        ctk.CTkButton(self, text="Delete Alarm", width=320,
+        # Delete + status row
+        row3 = ctk.CTkFrame(self, fg_color="transparent")
+        row3.pack(fill="x", padx=15, pady=4)
+        ctk.CTkButton(row3, text="Delete Alarm", width=130,
                       fg_color="#c0392b", hover_color="#96281b",
-                      command=self.delete_alarm).pack(pady=5)
+                      command=self.delete_alarm).pack(side="left")
+        self.status_label = ctk.CTkLabel(row3, text="", text_color="green",
+                                         font=ctk.CTkFont(size=11))
+        self.status_label.pack(side="left", padx=10)
 
-        self.status_label = ctk.CTkLabel(self, text="", text_color="green")
-        self.status_label.pack(pady=5)
+        ctk.CTkFrame(self, height=1, fg_color="#444").pack(fill="x", padx=15, pady=6)
 
-        self.start_btn = ctk.CTkButton(self, text="Start Alarms", width=320,
+        # Start + Stop buttons side by side
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(fill="x", padx=15, pady=(0, 12))
+        self.start_btn = ctk.CTkButton(btn_row, text="Start Alarms",
                                        fg_color="#27ae60", hover_color="#1e8449",
                                        command=self.start_alarms)
-        self.start_btn.pack(pady=(10, 5))
-
-        self.stop_btn = ctk.CTkButton(self, text="Stop Alarms", width=320,
+        self.start_btn.pack(side="left", expand=True, fill="x", padx=(0, 5))
+        self.stop_btn = ctk.CTkButton(btn_row, text="Stop Alarms",
                                       fg_color="#7f8c8d", hover_color="#616a6b",
                                       command=self.stop_alarms, state="disabled")
-        self.stop_btn.pack(pady=(0, 10))
+        self.stop_btn.pack(side="right", expand=True, fill="x", padx=(5, 0))
+
+    def preview_voice(self):
+        self.set_status("Previewing voice...", "orange")
+        voice = VOICES[self.voice_var.get()]
+        def run():
+            asyncio.run(speak("Hello! This is a preview of your selected alarm voice.", voice))
+            play_audio(self.volume_var.get())
+            self.set_status("Preview done.", "green")
+        threading.Thread(target=run, daemon=True).start()
+
+    def update_vol_label(self, *args):
+        pct = int(self.volume_var.get() * 100)
+        self.vol_label.configure(text=f"{pct}%")
 
     def update_clock(self):
         current = time.strftime("%I:%M:%S %p")
@@ -247,7 +297,7 @@ class AlarmApp(ctk.CTk):
                     self.set_status(f"Alarm triggered: {alarm_time}", "yellow")
                     voice = VOICES[self.voice_var.get()]
                     asyncio.run(speak(message, voice))
-                    play_audio()
+                    play_audio(self.volume_var.get())
                     choice = self.show_snooze_popup(alarm_time, message)
                     if choice == "snooze":
                         snoozed = time.strptime(alarm_time, "%H:%M")
