@@ -6,6 +6,8 @@ import time
 import json
 import os
 import threading
+import speech_recognition as sr
+import re
 
 ALARMS_FILE = "alarms.json"
 
@@ -130,6 +132,13 @@ class AlarmApp(ctk.CTk):
         ctk.CTkButton(msg_row, text="Add", width=70,
                       command=self.add_alarm).pack(side="right")
 
+        ctk.CTkButton(row2, text="🎤  Set Alarm by Voice", width=320, height=32,
+                      fg_color="#8e44ad", hover_color="#6c3483",
+                      command=self.set_alarm_by_voice).pack(pady=(6, 0))
+        self.heard_label = ctk.CTkLabel(row2, text="", font=ctk.CTkFont(size=11),
+                                        text_color="#aaaaaa", wraplength=400)
+        self.heard_label.pack(anchor="w", pady=(2, 0))
+
         # Alarm list
         ctk.CTkLabel(self, text="Your Alarms:", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=15)
         self.listbox = ctk.CTkTextbox(self, height=120, state="disabled")
@@ -169,6 +178,67 @@ class AlarmApp(ctk.CTk):
                                       fg_color="#7f8c8d", hover_color="#616a6b",
                                       command=self.stop_alarms, state="disabled")
         self.stop_btn.pack(side="right", expand=True, fill="x", padx=(5, 0))
+
+    def set_alarm_by_voice(self):
+        self.set_status("Listening... speak now!", "orange")
+        threading.Thread(target=self.listen_and_set, daemon=True).start()
+
+    def listen_and_set(self):
+        recognizer = sr.Recognizer()
+        try:
+            with sr.Microphone() as source:
+                recognizer.adjust_for_ambient_noise(source, duration=1)
+                audio = recognizer.listen(source, timeout=6)
+            text = recognizer.recognize_google(audio).lower()
+            self.heard_label.configure(text=f'Heard: "{text}"')
+            self.after(100, lambda t=text: self.parse_voice_alarm(t))
+        except sr.WaitTimeoutError:
+            self.set_status("No speech detected. Try again.", "red")
+        except sr.UnknownValueError:
+            self.set_status("Could not understand. Try again.", "red")
+        except sr.RequestError:
+            self.set_status("Internet needed for voice recognition.", "red")
+
+    def parse_voice_alarm(self, text):
+        text = text.replace("a.m.", "am").replace("p.m.", "pm")
+        text = text.replace("o'clock", "00").replace("oclock", "00")
+
+        word_to_num = {
+            "one": "1", "two": "2", "three": "3", "four": "4",
+            "five": "5", "six": "6", "seven": "7", "eight": "8",
+            "nine": "9", "ten": "10", "eleven": "11", "twelve": "12",
+            "thirty": "30", "fifteen": "15", "forty five": "45",
+            "forty": "40", "twenty": "20", "zero": "00",
+        }
+        for word, num in word_to_num.items():
+            text = text.replace(word, num)
+
+        hour, minute, ampm, end_pos = None, "00", None, 0
+
+        # pattern 1: "9 30 pm" or "9:30 pm"
+        m = re.search(r'(\d{1,2})[: ](\d{2})\s*(am|pm)', text)
+        if m:
+            hour, minute, ampm, end_pos = m.group(1), m.group(2), m.group(3).upper(), m.end()
+
+        # pattern 2: "9 pm" or "9pm"
+        if not hour:
+            m = re.search(r'(\d{1,2})\s*(am|pm)', text)
+            if m:
+                hour, ampm, end_pos = m.group(1), m.group(2).upper(), m.end()
+
+        if not hour:
+            self.msg_entry.delete(0, "end")
+            self.msg_entry.insert(0, text)
+            self.set_status("No time found — edit message & click Add.", "orange")
+            return
+
+        converted = convert_to_24h(f"{hour}:{minute} {ampm}")
+        message = text[end_pos:].strip() or "Alarm!"
+
+        self.alarms.append((converted, message))
+        save_alarms(self.alarms)
+        self.refresh_list()
+        self.set_status(f"Voice alarm set: {converted} — {message}", "green")
 
     def preview_voice(self):
         self.set_status("Previewing voice...", "orange")
